@@ -26,14 +26,17 @@ jobs:
           - arch: amd64
             target: x86
             subtarget: 64
+            pkgtype: apk
 
           - arch: arm64
             target: armsr
             subtarget: armv8
+            pkgtype: apk
 
           - arch: arm
             target: armvirt
             subtarget: 32
+            pkgtype: ipk
 
     steps:
       - name: Checkout repository
@@ -76,7 +79,7 @@ jobs:
 
           CONFIG_PACKAGE_luci-app-qtun=y
 
-          # CI optimization
+          # Build package only
           CONFIG_ALL_KMODS=n
           CONFIG_ALL_NONSHARED=n
           CONFIG_DEVEL=n
@@ -103,32 +106,42 @@ jobs:
       - name: Build package
         run: |
           cd openwrt
-          make package/luci-app-qtun/{clean,compile} -j1 V=sc
+          make package/luci-app-qtun/clean V=s
+          make package/luci-app-qtun/compile -j1 V=sc
 
-      - name: Debug package search
+      - name: Debug package output
         run: |
           cd openwrt
-          echo "=== QTUN PACKAGE SEARCH ==="
-          find bin/ -type f | grep -E "qtun|ipk" || true
+          echo "=== TARGET BIN ==="
+          find bin/targets -type f | grep -E "qtun|apk|ipk" || true
+
+          echo "=== PACKAGE BIN ==="
+          find bin/packages -type f | grep -E "qtun|apk|ipk" || true
 
       - name: Collect packages
         run: |
           rm -rf release
           mkdir -p release
 
-          find openwrt/bin/ -type f -name "*luci-app-qtun*.ipk" | while read file; do
+          # OpenWrt SNAPSHOT newer targets may output .apk instead of .ipk
+          find openwrt/bin/ -type f \( -name "*luci-app-qtun*.ipk" -o -name "*luci-app-qtun*.apk" \) | while read file; do
+            ext="${file##*.}"
             base=$(basename "$file")
-            cp "$file" "release/${base%.ipk}_${{ matrix.arch }}.ipk"
+            cp "$file" "release/${base%.*}_${{ matrix.arch }}.${ext}"
           done
 
           echo "=== Release contents ==="
-          ls -lah release || true
+          ls -lah release
+
+          test "$(find release -type f | wc -l)" -gt 0
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-qtun-${{ matrix.arch }}
-          path: release/*.ipk
+          path: |
+            release/*.ipk
+            release/*.apk
           if-no-files-found: error
 
   release:
@@ -145,7 +158,7 @@ jobs:
       - name: Show release files
         run: |
           echo "=== ALL RELEASE FILES ==="
-          find artifacts -type f -name "*.ipk" -print
+          find artifacts -type f \( -name "*.ipk" -o -name "*.apk" \) -print
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -154,4 +167,6 @@ jobs:
           name: luci-app-qtun ${{ github.event.inputs.tag }}
           draft: false
           prerelease: false
-          files: artifacts/**/*.ipk
+          files: |
+            artifacts/**/*.ipk
+            artifacts/**/*.apk
