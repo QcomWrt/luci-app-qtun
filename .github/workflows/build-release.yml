@@ -4,168 +4,81 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (contoh: v1.0.1)"
+        description: "Release tag (e.g. v1.0.1)"
         required: true
         default: "v1.0.1"
 
 permissions:
   contents: write
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
-    name: build (${{ matrix.arch }}, ${{ matrix.target }}, ${{ matrix.subtarget }})
-    runs-on: ubuntu-24.04
-
+    name: Build (${{ matrix.arch }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
-            target: x86
-            subtarget: 64
-
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/x86/64/openwrt-sdk-23.05.0-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           - arch: arm64
-            target: armsr
-            subtarget: armv8
-
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/armsr/armv8/openwrt-sdk-23.05.0-armsr-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
           - arch: arm
-            target: armvirt
-            subtarget: 32
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/armvirt/32/openwrt-sdk-23.05.0-armvirt-32_gcc-12.3.0_musl.Linux-x86_64.tar.xz
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y \
-            build-essential clang flex bison g++ gawk gcc-multilib g++-multilib \
-            gettext git libncurses5-dev libssl-dev \
-            python3 python3-setuptools python3-dev \
-            rsync unzip zlib1g-dev file wget curl jq ca-certificates \
-            patch pkgconf xz-utils tar
+          sudo apt install -y build-essential clang flex bison gawk gettext git libncurses5-dev libssl-dev python3-setuptools rsync unzip zlib1g-dev file wget curl
 
-      # USE STABLE 23.05 => default IPK/opkg
-      - name: Clone OpenWrt 23.05
+      - name: Setup SDK
         run: |
-          git clone --depth 1 --branch openwrt-23.05 \
-            https://github.com/openwrt/openwrt.git openwrt
-
-          cd openwrt
+          wget -O sdk.tar.xz ${{ matrix.sdk_url }}
+          mkdir sdk && tar -xf sdk.tar.xz -C sdk --strip-components=1
+          cd sdk
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Copy package into OpenWrt tree
+      - name: Build Package
         run: |
-          mkdir -p openwrt/package/luci-app-qtun
-          rsync -av \
-            --exclude=openwrt \
-            --exclude=.git \
-            --exclude=.github \
-            ./ openwrt/package/luci-app-qtun/
-
-      - name: Configure target (FORCE IPK)
-        run: |
-          cd openwrt
-
-          cat > .config <<EOF
-          CONFIG_TARGET_${{ matrix.target }}=y
-          CONFIG_TARGET_${{ matrix.target }}_${{ matrix.subtarget }}=y
-
-          CONFIG_PACKAGE_luci-app-qtun=y
-
-          # FORCE IPK / OPKG
-          CONFIG_USE_APK=n
-          CONFIG_USE_OPKG=y
-          CONFIG_PACKAGE_opkg=y
-
-          # CI optimization
-          CONFIG_ALL_KMODS=n
-          CONFIG_ALL_NONSHARED=n
-          CONFIG_DEVEL=n
-          CONFIG_CCACHE=n
-          EOF
-
+          cd sdk
+          mkdir -p package/luci-app-qtun
+          rsync -av ../ package/luci-app-qtun/ --exclude=sdk --exclude=.git --exclude=.github
           make defconfig
+          # Build hanya paket qtun
+          make package/luci-app-qtun/compile V=s
 
-          echo "=== PACKAGE SYSTEM ==="
-          grep -E 'CONFIG_USE_APK|CONFIG_USE_OPKG|CONFIG_PACKAGE_opkg' .config || true
-
-      - name: Download sources
+      - name: Collect Artifacts
         run: |
-          cd openwrt
-          make download -j$(nproc) V=s
-
-      - name: Build tools
-        run: |
-          cd openwrt
-          make tools/install -j1 V=s
-
-      - name: Build toolchain
-        run: |
-          cd openwrt
-          make toolchain/install -j$(nproc) V=s
-
-      - name: Build package
-        run: |
-          cd openwrt
-          make package/luci-app-qtun/clean V=s
-          make package/luci-app-qtun/compile -j1 V=sc
-
-      - name: Debug package output
-        run: |
-          cd openwrt
-          echo "=== QTUN PACKAGE FILES ==="
-          find bin/ -type f | grep -E "qtun|ipk" || true
-
-      - name: Collect IPK packages
-        run: |
-          rm -rf release
           mkdir -p release
+          find sdk/bin/packages/ -type f -name "luci-app-qtun*.ipk" -exec cp {} release/ \;
+          cd release
+          for f in *.ipk; do mv "$f" "${f%.ipk}_${{ matrix.arch }}.ipk"; done
 
-          find openwrt/bin/ -type f -name "*luci-app-qtun*.ipk" | while read file; do
-            base=$(basename "$file")
-            cp "$file" "release/${base%.ipk}_${{ matrix.arch }}.ipk"
-          done
-
-          echo "=== Release contents ==="
-          ls -lah release
-
-          # HARD FAIL if no ipk
-          test "$(find release -type f -name '*.ipk' | wc -l)" -gt 0
-
-      - name: Upload artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: luci-app-qtun-${{ matrix.arch }}
+          name: qtun-${{ matrix.arch }}
           path: release/*.ipk
-          if-no-files-found: error
 
   release:
-    name: release
     needs: build
-    runs-on: ubuntu-24.04
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Download all artifacts
+      - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: ./all-artifacts
+          merge-multiple: true
 
-      - name: Show release files
-        run: |
-          echo "=== ALL RELEASE FILES ==="
-          find artifacts -type f -name "*.ipk" -print
-
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag }}
-          name: luci-app-qtun ${{ github.event.inputs.tag }}
-          draft: false
-          prerelease: false
-          files: artifacts/**/*.ipk
+          name: Release ${{ github.event.inputs.tag }}
+          files: ./all-artifacts/*.ipk
+          token: ${{ secrets.GITHUB_TOKEN }}
