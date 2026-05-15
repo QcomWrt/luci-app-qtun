@@ -20,12 +20,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: amd64
+          - arch: x86_64
             sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/x86/64/openwrt-sdk-23.05.0-x86-64_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          - arch: arm64
+          - arch: aarch64_generic
             sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/armsr/armv8/openwrt-sdk-23.05.0-armsr-armv8_gcc-12.3.0_musl.Linux-x86_64.tar.xz
-          - arch: arm
-            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/armsr/armv7/openwrt-sdk-23.05.0-armsr-armv7_gcc-12.3.0_musl_eabi.Linux-x86_64.tar.xz
+          - arch: aarch64_cortex-a53
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/sunxi/cortexa53/openwrt-sdk-23.05.0-sunxi-cortexa53_gcc-12.3.0_musl.Linux-x86_64.tar.xz
+          - arch: arm_cortex-a7_neon-vfpv4
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/sunxi/cortexa7/openwrt-sdk-23.05.0-sunxi-cortexa7_gcc-12.3.0_musl_eabi.Linux-x86_64.tar.xz
+          - arch: arm_cortex-a9
+            sdk_url: https://downloads.openwrt.org/releases/23.05.0/targets/mvebu/cortexa9/openwrt-sdk-23.05.0-mvebu-cortexa9_gcc-12.3.0_musl_eabi.Linux-x86_64.tar.xz
 
     steps:
       - name: Checkout

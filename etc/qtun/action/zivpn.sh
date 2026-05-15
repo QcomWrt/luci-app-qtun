@@ -373,6 +373,38 @@ main() {
     log "Use routing.sh to redirect traffic"
 }
 
+stop_zivpn_only() {
+    log "Stopping ZiVPN workers only..."
+
+    if [ -f "$ZIVPN_PID" ]; then
+        kill_pid_file "$ZIVPN_PID"
+    fi
+
+    for pidfile in "$WORKER_DIR"/*.pid; do
+        [ -f "$pidfile" ] && kill_pid_file "$pidfile"
+    done
+
+    killall -9 zivpn 2>/dev/null
+    cleanup_workers
+
+    log "ZiVPN workers stopped"
+}
+
+restart_zivpn_only() {
+    log "Restarting ZiVPN workers only..."
+
+    stop_zivpn_only
+    sleep 2
+
+    start_zivpn || {
+        log "ZiVPN reconnect failed"
+        return 1
+    }
+
+    log "ZiVPN workers reconnected"
+    return 0
+}
+
 case "${1:-}" in
     start)
         main
@@ -386,11 +418,14 @@ case "${1:-}" in
         sleep 2
         main
         ;;
+    reconnect-zivpn)
+        restart_zivpn_only
+        ;;
     status)
         status_stack
         ;;
     *)
-        echo "Usage: $0 {start|stop|restart|status}"
+        echo "Usage: $0 {start|stop|restart|reconnect-zivpn|status}"
         exit 1
         ;;
 esac

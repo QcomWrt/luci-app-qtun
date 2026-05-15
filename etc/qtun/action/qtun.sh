@@ -5,8 +5,42 @@ MODE="$(uci -q get qtun.main.mode 2>/dev/null)"
 ENABLED="$(uci -q get qtun.main.enabled 2>/dev/null)"
 ACTION="${1:-start}"
 
+RUN="/etc/qtun/run"
+WATCHDOG_SH="/etc/qtun/action/watchdog.sh"
+WATCHDOG_PID="$RUN/watchdog.pid"
+
+mkdir -p "$RUN"
+
 log() {
     /etc/qtun/action/logs.sh process "$1"
+}
+
+start_watchdog() {
+    [ -x "$WATCHDOG_SH" ] || {
+        log "Watchdog not found or not executable"
+        return 1
+    }
+
+    if [ -f "$WATCHDOG_PID" ]; then
+        PID="$(cat "$WATCHDOG_PID" 2>/dev/null)"
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            log "QTUN watchdog already running"
+            return 0
+        fi
+    fi
+
+    log "Starting QTUN watchdog"
+    "$WATCHDOG_SH" >/dev/null 2>&1 &
+    echo "$!" > "$WATCHDOG_PID"
+}
+
+stop_watchdog() {
+    if [ -f "$WATCHDOG_PID" ]; then
+        PID="$(cat "$WATCHDOG_PID" 2>/dev/null)"
+        [ -n "$PID" ] && kill "$PID" 2>/dev/null
+        rm -f "$WATCHDOG_PID"
+        log "QTUN watchdog stopped"
+    fi
 }
 
 # =========================================================
@@ -38,6 +72,7 @@ start_mode() {
     esac
 
     /etc/qtun/action/routing.sh start
+    start_watchdog
 }
 
 # =========================================================
@@ -58,6 +93,8 @@ boot_mode() {
 # STOP ALL
 # =========================================================
 stop_mode() {
+    stop_watchdog
+
     /etc/qtun/action/routing.sh stop
 
     for MODE_SCRIPT in zivpn ssh ssh_ws ssh_ssl; do
@@ -73,18 +110,35 @@ status_mode() {
     log "Enabled (autostart): ${ENABLED:-0}"
     log "Mode: ${MODE:-none}"
 
+    # Watchdog status
+    if [ -f "$WATCHDOG_PID" ]; then
+        PID="$(cat "$WATCHDOG_PID" 2>/dev/null)"
+
+        if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+            log "Watchdog: RUNNING (PID $PID)"
+        else
+            log "Watchdog: DEAD"
+        fi
+    else
+        log "Watchdog: STOPPED"
+    fi
+
     case "$MODE" in
         zivpn)
-            [ -x /etc/qtun/action/zivpn.sh ] && /etc/qtun/action/zivpn.sh status
+            [ -x /etc/qtun/action/zivpn.sh ] && \
+            /etc/qtun/action/zivpn.sh status
             ;;
         ssh)
-            [ -x /etc/qtun/action/ssh.sh ] && /etc/qtun/action/ssh.sh status
+            [ -x /etc/qtun/action/ssh.sh ] && \
+            /etc/qtun/action/ssh.sh status
             ;;
         ssh_ws)
-            [ -x /etc/qtun/action/ssh_ws.sh ] && /etc/qtun/action/ssh_ws.sh status
+            [ -x /etc/qtun/action/ssh_ws.sh ] && \
+            /etc/qtun/action/ssh_ws.sh status
             ;;
         ssh_ssl)
-            [ -x /etc/qtun/action/ssh_ssl.sh ] && /etc/qtun/action/ssh_ssl.sh status
+            [ -x /etc/qtun/action/ssh_ssl.sh ] && \
+            /etc/qtun/action/ssh_ssl.sh status
             ;;
     esac
 
