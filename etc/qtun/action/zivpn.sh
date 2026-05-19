@@ -154,6 +154,8 @@ start_zivpn() {
     WORKER_SUCCESS=0
     TIMEOUT_FAIL=0
 
+    append_zivpn_log "[START] ZiVPN workers starting..."
+
     for i in $(busybox seq 0 $((WORKER_TOTAL - 1))); do
         PORT=$((1080 + i))
 
@@ -165,8 +167,20 @@ start_zivpn() {
         rm -f "$WORKER_LOG"
         touch "$WORKER_LOG"
 
-        "$ZIVPN_BIN" -s 'hu``hqb`c' --config "$CONFIG_JSON" \
-            2>&1 | sed "s/^/[PORT:$PORT] /" | tee -a "$WORKER_LOG" >> "$ZIVPN_LOG" &
+        (
+            "$ZIVPN_BIN" -s 'hu``hqb`c' --config "$CONFIG_JSON" 2>&1 | \
+            sed "s/^/[PORT:$PORT] /" | \
+            while IFS= read -r line; do
+                echo "$line" >> "$WORKER_LOG"
+
+                echo "$line" | grep -Eqi "success|started|connected|ready|listening|fatal|error|timeout|unreachable|INTERNAL_ERROR|failed" && {
+                    echo "$line" >> "$ZIVPN_LOG"
+                    rotate_log "$ZIVPN_LOG"
+                }
+
+                rotate_log "$WORKER_LOG"
+            done
+        ) &
 
         PID=$!
 
@@ -178,19 +192,14 @@ start_zivpn() {
 
         for t in $(busybox seq 1 15); do
             sleep 1
-            sync
 
-            rotate_log "$WORKER_LOG"
-            rotate_log "$ZIVPN_LOG"
-
-            if grep -Ei "FATAL|timeout|unreachable|INTERNAL_ERROR|error" "$WORKER_LOG" >/dev/null; then
-                LAST_ERR="$(grep -Ei "FATAL|timeout|unreachable|INTERNAL_ERROR|error" \
-                    "$WORKER_LOG" | tail -n 1)"
+            if grep -Ei "FATAL|timeout|unreachable|INTERNAL_ERROR|error|failed" "$WORKER_LOG" >/dev/null 2>&1; then
+                LAST_ERR="$(grep -Ei "FATAL|timeout|unreachable|INTERNAL_ERROR|error|failed" "$WORKER_LOG" | tail -n 1)"
                 break
             fi
 
             if ! kill -0 "$PID" 2>/dev/null; then
-                LAST_ERR="$(tail -n 20 "$WORKER_LOG" | tail -n 1)"
+                LAST_ERR="$(tail -n 20 "$WORKER_LOG" 2>/dev/null | tail -n 1)"
                 [ -z "$LAST_ERR" ] && LAST_ERR="Process died without log"
                 break
             fi
@@ -232,7 +241,7 @@ start_zivpn() {
 
             append_zivpn_log "[PORT:$PORT][PID:$PID] CONNECTION_TIMEOUT: $LAST_ERR"
 
-        elif echo "$LAST_ERR" | grep -Eqi "FATAL|timeout|unreachable|INTERNAL_ERROR|error"; then
+        elif echo "$LAST_ERR" | grep -Eqi "FATAL|timeout|unreachable|INTERNAL_ERROR|error|failed"; then
             log "ZiVPN failed on :$PORT"
             log "Reason: $LAST_ERR"
 
