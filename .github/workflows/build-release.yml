@@ -11,133 +11,28 @@ on:
       tag:
         description: "Release tag (e.g. v1.0.4 or v1.0.4-r2)"
         required: true
-        type: string
+        default: "v1.0.4"
 
 permissions:
   contents: write
 
-concurrency:
-  group: qtun-release
-  cancel-in-progress: false
-
 jobs:
-
-  # ============================================================
-  # PREPARE VERSION
-  # ============================================================
-
-  prepare:
-    name: Prepare Release
-    runs-on: ubuntu-latest
-
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      version: ${{ steps.version.outputs.version }}
-      release: ${{ steps.version.outputs.release }}
-      final_version: ${{ steps.version.outputs.final_version }}
-
-    steps:
-
-      - name: Determine Version
-        id: version
-        shell: bash
-        run: |
-          set -e
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            TAG="${GITHUB_REF_NAME}"
-          fi
-
-          RAW="${TAG#v}"
-
-          echo "======================================"
-          echo "Input tag: ${TAG}"
-          echo "======================================"
-
-          # Supported:
-          #
-          # v1.0.4
-          # v1.0.4-r2
-          # v1.0.4-r3
-          #
-          # NOT supported:
-          # v1.0.4-r1
-          #
-          if ! echo "$RAW" | grep -Eq \
-            '^[0-9]+\.[0-9]+\.[0-9]+$|^[0-9]+\.[0-9]+\.[0-9]+-r[2-9][0-9]*$'
-          then
-            echo ""
-            echo "ERROR: Invalid tag format."
-            echo ""
-            echo "Supported:"
-            echo "  v1.0.4"
-            echo "  v1.0.4-r2"
-            echo "  v1.0.4-r3"
-            echo ""
-            echo "Release 1 MUST use:"
-            echo "  v1.0.4"
-            echo ""
-            echo "Received:"
-            echo "  ${TAG}"
-            exit 1
-          fi
-
-          if echo "$RAW" | grep -q -- "-r"; then
-            VERSION="${RAW%-r*}"
-            RELEASE="${RAW##*-r}"
-            FINAL_VERSION="${VERSION}-r${RELEASE}"
-          else
-            VERSION="$RAW"
-            RELEASE="1"
-            FINAL_VERSION="$VERSION"
-          fi
-
-          echo ""
-          echo "======================================"
-          echo "Release Information"
-          echo "======================================"
-          echo "Tag           : ${TAG}"
-          echo "PKG_VERSION   : ${VERSION}"
-          echo "PKG_RELEASE   : ${RELEASE}"
-          echo "FINAL_VERSION : ${FINAL_VERSION}"
-          echo "======================================"
-          echo ""
-
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "release=${RELEASE}" >> "$GITHUB_OUTPUT"
-          echo "final_version=${FINAL_VERSION}" >> "$GITHUB_OUTPUT"
-
-
-  # ============================================================
-  # BUILD IPK
-  # ============================================================
-
   build:
-    name: Build IPK (${{ matrix.arch }})
-    needs: prepare
+    name: Build (${{ matrix.arch }})
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-
       matrix:
         include:
-
           - arch: x86_64
             target: x86/64
-
           - arch: aarch64_generic
             target: armsr/armv8
-
           - arch: aarch64_cortex-a53
             target: sunxi/cortexa53
-
           - arch: arm_cortex-a7_neon-vfpv4
             target: sunxi/cortexa7
-
           - arch: arm_cortex-a9
             target: mvebu/cortexa9
 
@@ -145,93 +40,94 @@ jobs:
       OWRT_VER: 23.05.0
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        shell: bash
+      - name: Parse Tag
         run: |
           set -e
 
-          sudo apt update
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          fi
 
+          echo "RESOLVED_TAG=$TAG_NAME" >> "$GITHUB_ENV"
+
+          RAW="${TAG_NAME#v}"
+
+          if echo "$RAW" | grep -q -- "-r"; then
+            VERSION="${RAW%-r*}"
+            RELEASE="${RAW##*-r}"
+          else
+            VERSION="$RAW"
+            RELEASE="1"
+          fi
+
+          if [ "$RELEASE" = "1" ]; then
+            FINAL_VERSION="$VERSION"
+          else
+            FINAL_VERSION="${VERSION}-r${RELEASE}"
+          fi
+
+          echo "QTUN_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "QTUN_RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          echo "QTUN_FINAL_VERSION=$FINAL_VERSION" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "Tag          : $TAG_NAME"
+          echo "PKG_VERSION  : $VERSION"
+          echo "PKG_RELEASE  : $RELEASE"
+          echo "FINAL_VERSION: $FINAL_VERSION"
+          echo "======================================"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
           sudo apt install -y \
-            build-essential \
-            clang \
-            flex \
-            bison \
-            gawk \
-            gettext \
-            git \
-            libncurses5-dev \
-            libssl-dev \
-            python3-setuptools \
-            rsync \
-            unzip \
-            zlib1g-dev \
-            file \
-            wget \
-            curl \
-            zstd
+            build-essential clang flex bison gawk gettext git \
+            libncurses5-dev libssl-dev python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl zstd
 
       - name: Setup SDK
-        shell: bash
         run: |
           set -e
 
           BASE_URL="https://downloads.openwrt.org/releases/${OWRT_VER}/targets/${{ matrix.target }}/"
 
-          echo "Searching SDK:"
-          echo "$BASE_URL"
-
-          SDK_FILE="$(
-            curl -fsSL "$BASE_URL" |
-            grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.(xz|zst)' |
-            sort -u |
-            head -n1
-          )"
+          SDK_FILE="$(curl -fsSL "$BASE_URL" | \
+            grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.(xz|zst)' | \
+            sort -u | head -n1)"
 
           if [ -z "$SDK_FILE" ]; then
-            echo ""
-            echo "ERROR: SDK file not found."
-            echo "URL: ${BASE_URL}"
+            echo "SDK file not found in $BASE_URL"
             exit 1
           fi
 
           SDK_URL="${BASE_URL}${SDK_FILE}"
 
-          echo ""
-          echo "SDK:"
+          echo "Downloading SDK:"
           echo "$SDK_URL"
-          echo ""
 
           wget -O sdk.tar "$SDK_URL"
 
           mkdir sdk
 
           case "$SDK_FILE" in
-
             *.tar.xz)
-              tar -xf sdk.tar \
-                -C sdk \
-                --strip-components=1
+              tar -xf sdk.tar -C sdk --strip-components=1
               ;;
-
             *.tar.zst)
-              tar \
-                --use-compress-program=unzstd \
+              tar --use-compress-program=unzstd \
                 -xf sdk.tar \
                 -C sdk \
                 --strip-components=1
               ;;
-
             *)
-              echo "ERROR: Unsupported SDK archive:"
-              echo "$SDK_FILE"
+              echo "Unsupported SDK archive: $SDK_FILE"
               exit 1
               ;;
-
           esac
 
           cd sdk
@@ -239,8 +135,7 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Prepare Package
-        shell: bash
+      - name: Inject Dynamic Version into Makefile
         run: |
           set -e
 
@@ -252,31 +147,19 @@ jobs:
             --exclude=.git \
             --exclude=.github
 
-          # Update ONLY the build copy.
-          #
-          # Repository Makefile is NOT modified here.
-
           sed -i \
-            "s/^PKG_VERSION:=.*/PKG_VERSION:=${{ needs.prepare.outputs.version }}/" \
+            "s/^PKG_VERSION:=.*/PKG_VERSION:=${QTUN_VERSION}/" \
             workdir/Makefile
 
           sed -i \
-            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${{ needs.prepare.outputs.release }}/" \
+            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${QTUN_RELEASE}/" \
             workdir/Makefile
 
-          echo ""
-          echo "======================================"
-          echo "Build Makefile"
-          echo "======================================"
-
+          echo "==== Patched Makefile ===="
           grep "^PKG_VERSION" workdir/Makefile
           grep "^PKG_RELEASE" workdir/Makefile
 
-          echo "======================================"
-          echo ""
-
       - name: Build Package
-        shell: bash
         run: |
           set -e
 
@@ -284,15 +167,12 @@ jobs:
 
           mkdir -p package/luci-app-qtun
 
-          rsync -av ../workdir/ \
-            package/luci-app-qtun/
+          rsync -av ../workdir/ package/luci-app-qtun/
 
           make defconfig
-
           make package/luci-app-qtun/compile V=s
 
-      - name: Collect IPK
-        shell: bash
+      - name: Collect Artifacts
         run: |
           set -e
 
@@ -300,73 +180,54 @@ jobs:
 
           FOUND=0
 
-          while IFS= read -r -d '' FILE; do
-
+          find sdk/bin/packages/ \
+            -type f \
+            -name "luci-app-qtun*.ipk" \
+            -print0 |
+          while IFS= read -r -d '' f; do
             FOUND=1
 
-            OUTPUT="luci-app-qtun_${{ needs.prepare.outputs.final_version }}_${{ matrix.arch }}.ipk"
+            NEW_NAME="luci-app-qtun_${QTUN_FINAL_VERSION}_${{ matrix.arch }}.ipk"
 
-            echo "Source:"
-            echo "$FILE"
+            echo "Copy:"
+            echo "$f"
+            echo "To:"
+            echo "release/$NEW_NAME"
 
-            echo ""
-            echo "Output:"
-            echo "release/${OUTPUT}"
+            cp "$f" "release/$NEW_NAME"
+          done
 
-            cp "$FILE" "release/${OUTPUT}"
-
-          done < <(
-            find sdk/bin/packages/ \
-              -type f \
-              -name "luci-app-qtun*.ipk" \
-              -print0
-          )
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo ""
+          if ! compgen -G "release/*.ipk" > /dev/null; then
             echo "ERROR: No IPK package found!"
             exit 1
           fi
 
-          echo ""
-          echo "Generated IPK:"
           ls -lh release/*.ipk
 
-      - name: Upload IPK Artifact
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: qtun-ipk-${{ matrix.arch }}
+          name: qtun-${{ matrix.arch }}
           path: release/*.ipk
           if-no-files-found: error
 
 
-  # ============================================================
-  # BUILD APK
-  # ============================================================
-
   build-apk:
     name: Build APK (${{ matrix.arch }})
-    needs: prepare
     runs-on: ubuntu-latest
 
     strategy:
       fail-fast: false
-
       matrix:
         include:
-
           - arch: x86_64
             target: x86/64
-
           - arch: aarch64_generic
             target: armsr/armv8
-
           - arch: aarch64_cortex-a53
             target: sunxi/cortexa53
-
           - arch: arm_cortex-a7_neon-vfpv4
             target: sunxi/cortexa7
-
           - arch: arm_cortex-a9
             target: mvebu/cortexa9
 
@@ -374,93 +235,94 @@ jobs:
       OWRT_VER: 25.12.0
 
     steps:
-
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        shell: bash
+      - name: Parse Tag
         run: |
           set -e
 
-          sudo apt update
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          fi
 
+          echo "RESOLVED_TAG=$TAG_NAME" >> "$GITHUB_ENV"
+
+          RAW="${TAG_NAME#v}"
+
+          if echo "$RAW" | grep -q -- "-r"; then
+            VERSION="${RAW%-r*}"
+            RELEASE="${RAW##*-r}"
+          else
+            VERSION="$RAW"
+            RELEASE="1"
+          fi
+
+          if [ "$RELEASE" = "1" ]; then
+            FINAL_VERSION="$VERSION"
+          else
+            FINAL_VERSION="${VERSION}-r${RELEASE}"
+          fi
+
+          echo "QTUN_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "QTUN_RELEASE=$RELEASE" >> "$GITHUB_ENV"
+          echo "QTUN_FINAL_VERSION=$FINAL_VERSION" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "Tag          : $TAG_NAME"
+          echo "PKG_VERSION  : $VERSION"
+          echo "PKG_RELEASE  : $RELEASE"
+          echo "FINAL_VERSION: $FINAL_VERSION"
+          echo "======================================"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
           sudo apt install -y \
-            build-essential \
-            clang \
-            flex \
-            bison \
-            gawk \
-            gettext \
-            git \
-            libncurses5-dev \
-            libssl-dev \
-            python3-setuptools \
-            rsync \
-            unzip \
-            zlib1g-dev \
-            file \
-            wget \
-            curl \
-            zstd
+            build-essential clang flex bison gawk gettext git \
+            libncurses5-dev libssl-dev python3-setuptools \
+            rsync unzip zlib1g-dev file wget curl zstd
 
       - name: Setup SDK
-        shell: bash
         run: |
           set -e
 
           BASE_URL="https://downloads.openwrt.org/releases/${OWRT_VER}/targets/${{ matrix.target }}/"
 
-          echo "Searching SDK:"
-          echo "$BASE_URL"
-
-          SDK_FILE="$(
-            curl -fsSL "$BASE_URL" |
-            grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.(xz|zst)' |
-            sort -u |
-            head -n1
-          )"
+          SDK_FILE="$(curl -fsSL "$BASE_URL" | \
+            grep -oE 'openwrt-sdk-[^"]+Linux-x86_64\.tar\.(xz|zst)' | \
+            sort -u | head -n1)"
 
           if [ -z "$SDK_FILE" ]; then
-            echo ""
-            echo "ERROR: SDK file not found."
-            echo "URL: ${BASE_URL}"
+            echo "SDK file not found in $BASE_URL"
             exit 1
           fi
 
           SDK_URL="${BASE_URL}${SDK_FILE}"
 
-          echo ""
-          echo "SDK:"
+          echo "Downloading SDK:"
           echo "$SDK_URL"
-          echo ""
 
           wget -O sdk.tar "$SDK_URL"
 
           mkdir sdk
 
           case "$SDK_FILE" in
-
             *.tar.xz)
-              tar -xf sdk.tar \
-                -C sdk \
-                --strip-components=1
+              tar -xf sdk.tar -C sdk --strip-components=1
               ;;
-
             *.tar.zst)
-              tar \
-                --use-compress-program=unzstd \
+              tar --use-compress-program=unzstd \
                 -xf sdk.tar \
                 -C sdk \
                 --strip-components=1
               ;;
-
             *)
-              echo "ERROR: Unsupported SDK archive:"
-              echo "$SDK_FILE"
+              echo "Unsupported SDK archive: $SDK_FILE"
               exit 1
               ;;
-
           esac
 
           cd sdk
@@ -468,8 +330,7 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Prepare Package
-        shell: bash
+      - name: Inject Dynamic Version into Makefile
         run: |
           set -e
 
@@ -481,31 +342,19 @@ jobs:
             --exclude=.git \
             --exclude=.github
 
-          # Update ONLY the build copy.
-          #
-          # Repository Makefile is NOT modified here.
-
           sed -i \
-            "s/^PKG_VERSION:=.*/PKG_VERSION:=${{ needs.prepare.outputs.version }}/" \
+            "s/^PKG_VERSION:=.*/PKG_VERSION:=${QTUN_VERSION}/" \
             workdir/Makefile
 
           sed -i \
-            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${{ needs.prepare.outputs.release }}/" \
+            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${QTUN_RELEASE}/" \
             workdir/Makefile
 
-          echo ""
-          echo "======================================"
-          echo "Build Makefile"
-          echo "======================================"
-
+          echo "==== Patched Makefile ===="
           grep "^PKG_VERSION" workdir/Makefile
           grep "^PKG_RELEASE" workdir/Makefile
 
-          echo "======================================"
-          echo ""
-
       - name: Build Package
-        shell: bash
         run: |
           set -e
 
@@ -513,52 +362,37 @@ jobs:
 
           mkdir -p package/luci-app-qtun
 
-          rsync -av ../workdir/ \
-            package/luci-app-qtun/
+          rsync -av ../workdir/ package/luci-app-qtun/
 
           make defconfig
-
           make package/luci-app-qtun/compile V=s
 
-      - name: Collect APK
-        shell: bash
+      - name: Collect APK Artifacts
         run: |
           set -e
 
           mkdir -p release
 
-          FOUND=0
+          find sdk/bin/packages/ \
+            -type f \
+            -name "luci-app-qtun*.apk" \
+            -print0 |
+          while IFS= read -r -d '' f; do
+            NEW_NAME="luci-app-qtun_${QTUN_FINAL_VERSION}_${{ matrix.arch }}.apk"
 
-          while IFS= read -r -d '' FILE; do
+            echo "Copy:"
+            echo "$f"
+            echo "To:"
+            echo "release/$NEW_NAME"
 
-            FOUND=1
+            cp "$f" "release/$NEW_NAME"
+          done
 
-            OUTPUT="luci-app-qtun_${{ needs.prepare.outputs.final_version }}_${{ matrix.arch }}.apk"
-
-            echo "Source:"
-            echo "$FILE"
-
-            echo ""
-            echo "Output:"
-            echo "release/${OUTPUT}"
-
-            cp "$FILE" "release/${OUTPUT}"
-
-          done < <(
-            find sdk/bin/packages/ \
-              -type f \
-              -name "luci-app-qtun*.apk" \
-              -print0
-          )
-
-          if [ "$FOUND" -eq 0 ]; then
-            echo ""
+          if ! compgen -G "release/*.apk" > /dev/null; then
             echo "ERROR: No APK package found!"
             exit 1
           fi
 
-          echo ""
-          echo "Generated APK:"
           ls -lh release/*.apk
 
       - name: Upload APK Artifact
@@ -569,58 +403,38 @@ jobs:
           if-no-files-found: error
 
 
-  # ============================================================
-  # CREATE GITHUB RELEASE
-  # ============================================================
-
   release:
     name: Create GitHub Release
     needs:
-      - prepare
       - build
       - build-apk
 
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Download Artifacts
         uses: actions/download-artifact@v4
         with:
           path: ./all-artifacts
           merge-multiple: true
 
-      - name: Show Release Files
-        shell: bash
+      - name: Determine Tag Name
         run: |
           set -e
 
-          echo "======================================"
-          echo "Release Information"
-          echo "======================================"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          fi
 
-          echo "Tag:"
-          echo "${{ needs.prepare.outputs.tag }}"
+          echo "TAG_NAME=$TAG_NAME" >> "$GITHUB_ENV"
 
-          echo ""
-          echo "Version:"
-          echo "${{ needs.prepare.outputs.final_version }}"
-
-          echo ""
-          echo "Files:"
-
-          find ./all-artifacts \
-            -maxdepth 1 \
-            -type f \
-            -print
-
-          echo "======================================"
-
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: Release ${{ needs.prepare.outputs.tag }}
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.TAG_NAME }}
           generate_release_notes: true
           files: |
             ./all-artifacts/*.ipk
@@ -629,18 +443,21 @@ jobs:
 
 
   # ============================================================
-  # UPDATE MAKEFILE ON MASTER
+  # UPDATE MAKEFILE AND PUSH TO MASTER
   # ============================================================
 
-  update-makefile:
-    name: Update Makefile on master
+  bump-makefile:
+    name: Update Makefile Version
     needs:
-      - prepare
       - release
-
     runs-on: ubuntu-latest
 
     steps:
+
+      # IMPORTANT:
+      # Always checkout MASTER.
+      # This prevents the Makefile update from being committed
+      # to the tag itself.
 
       - name: Checkout master
         uses: actions/checkout@v4
@@ -649,38 +466,58 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve Version
+        shell: bash
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_NAME="${{ github.ref_name }}"
+          else
+            TAG_NAME="${{ github.event.inputs.tag }}"
+          fi
+
+          RAW="${TAG_NAME#v}"
+
+          if echo "$RAW" | grep -q -- "-r"; then
+            VERSION="${RAW%-r*}"
+            RELEASE="${RAW##*-r}"
+          else
+            VERSION="$RAW"
+            RELEASE="1"
+          fi
+
+          echo "QTUN_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "QTUN_RELEASE=$RELEASE" >> "$GITHUB_ENV"
+
+          echo "======================================"
+          echo "Updating Makefile"
+          echo "======================================"
+          echo "Tag     : $TAG_NAME"
+          echo "Version : $VERSION"
+          echo "Release : $RELEASE"
+          echo "======================================"
+
       - name: Update Makefile
         shell: bash
         run: |
           set -e
 
-          VERSION="${{ needs.prepare.outputs.version }}"
-          RELEASE="${{ needs.prepare.outputs.release }}"
-
-          echo ""
-          echo "======================================"
-          echo "Updating repository Makefile"
-          echo "======================================"
-
-          echo "Version : ${VERSION}"
-          echo "Release : ${RELEASE}"
-
           sed -i \
-            "s/^PKG_VERSION:=.*/PKG_VERSION:=${VERSION}/" \
+            "s/^PKG_VERSION:=.*/PKG_VERSION:=${QTUN_VERSION}/" \
             Makefile
 
           sed -i \
-            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${RELEASE}/" \
+            "s/^PKG_RELEASE:=.*/PKG_RELEASE:=${QTUN_RELEASE}/" \
             Makefile
 
           echo ""
-          echo "Updated Makefile:"
+          echo "==== Updated Makefile ===="
+
           grep "^PKG_VERSION" Makefile
           grep "^PKG_RELEASE" Makefile
 
-          echo "======================================"
-
-      - name: Commit and Push
+      - name: Commit Makefile
         shell: bash
         run: |
           set -e
@@ -691,25 +528,25 @@ jobs:
           git add Makefile
 
           if git diff --cached --quiet; then
-            echo ""
-            echo "No Makefile changes detected."
-            echo "Nothing to commit."
+            echo "No version change detected."
             exit 0
           fi
 
-          VERSION="${{ needs.prepare.outputs.version }}"
-          RELEASE="${{ needs.prepare.outputs.release }}"
-
           git commit \
-            -m "chore: update QTUN to ${VERSION}-r${RELEASE}"
+            -m "chore: bump QTUN to ${QTUN_VERSION}-r${QTUN_RELEASE}"
 
-          echo ""
+      - name: Push to protected master
+        shell: bash
+        run: |
+          set -e
+
           echo "Pushing Makefile update to master..."
 
           git push origin HEAD:master
 
           echo ""
           echo "======================================"
-          echo "Makefile successfully updated."
+          echo "SUCCESS"
+          echo "Makefile pushed to master."
           echo "======================================"
 ```
