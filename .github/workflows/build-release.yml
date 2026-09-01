@@ -1,10 +1,6 @@
 name: Build & Release luci-app-qtun
 
 on:
-  push:
-    tags:
-      - 'v*'
-      
   workflow_dispatch:
     inputs:
       tag:
@@ -44,16 +40,8 @@ jobs:
 
       - name: Parse Tag
         run: |
-          # Ambil tag dari push event atau manual input
-          if [ "${{ github.event_name }}" = "push" ]; then
-            TAG_NAME="${{ github.ref_name }}"
-          else
-            TAG_NAME="${{ github.event.inputs.tag }}"
-          fi
-          
-          echo "RESOLVED_TAG=$TAG_NAME" >> $GITHUB_ENV
-          
-          RAW="${TAG_NAME#v}"
+          RAW="${{ github.event.inputs.tag }}"
+          RAW="${RAW#v}"
 
           if echo "$RAW" | grep -q -- "-r"; then
             VERSION="${RAW%-r*}"
@@ -182,15 +170,8 @@ jobs:
 
       - name: Parse Tag
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            TAG_NAME="${{ github.ref_name }}"
-          else
-            TAG_NAME="${{ github.event.inputs.tag }}"
-          fi
-          
-          echo "RESOLVED_TAG=$TAG_NAME" >> $GITHUB_ENV
-          
-          RAW="${TAG_NAME#v}"
+          RAW="${{ github.event.inputs.tag }}"
+          RAW="${RAW#v}"
 
           if echo "$RAW" | grep -q -- "-r"; then
             VERSION="${RAW%-r*}"
@@ -298,19 +279,11 @@ jobs:
           path: ./all-artifacts
           merge-multiple: true
 
-      - name: Determine Tag Name
-        run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
-          else
-            echo "TAG_NAME=${{ github.event.inputs.tag }}" >> $GITHUB_ENV
-          fi
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ env.TAG_NAME }}
-          name: Release ${{ env.TAG_NAME }}
+          tag_name: ${{ github.event.inputs.tag }}
+          name: Release ${{ github.event.inputs.tag }}
           files: |
             ./all-artifacts/*.ipk
             ./all-artifacts/*.apk
@@ -329,13 +302,8 @@ jobs:
 
       - name: Update PKG_VERSION & PKG_RELEASE
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            TAG_NAME="${{ github.ref_name }}"
-          else
-            TAG_NAME="${{ github.event.inputs.tag }}"
-          fi
-          
-          RAW="${TAG_NAME#v}"
+          RAW="${{ github.event.inputs.tag }}"
+          RAW="${RAW#v}"
 
           if echo "$RAW" | grep -q -- "-r"; then
             VERSION="${RAW%-r*}"
@@ -365,6 +333,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "No version change detected."
           else
-            git commit -m "Bump QTUN to v${QTUN_VERSION}-r${QTUN_RELEASE} [skip ci]"
+            git commit -m "Bump QTUN to v${QTUN_VERSION}-r${QTUN_RELEASE}"
             git push
           fi
