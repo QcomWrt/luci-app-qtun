@@ -1,8 +1,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-qtun
-PKG_VERSION:=1.0.2
-PKG_RELEASE:=4
+PKG_VERSION:=1.0.3
+PKG_RELEASE:=1
 
 PKG_MAINTAINER:=Azy <azyanggara2707@gmail.com>
 PKG_LICENSE:=MIT
