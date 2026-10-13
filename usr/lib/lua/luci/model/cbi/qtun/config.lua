@@ -16,25 +16,22 @@ m.description = [[
 s = m:section(NamedSection, "main", "global", "Edit Konfigurasi")
 s.addremove = false
 
--- Dropdown Mode (Hanya sebagai pengalih tampilan)
+-- Dropdown Mode
 mode = s:option(ListValue, "mode_selector", "Config Mode")
-mode:value("ssh", "SSH Direct")
-mode:value("q-ssh","Q SSH(proxy,payload)")
+mode:value("q-ssh", "Q-SSH (Injector)")
 mode:value("clash", "Clash / Mihomo")
 mode:value("zivpn", "ZiVPN (UDP)")
 
--- Ambil mode aktif dari sistem hanya untuk dijadikan DEFAULT tampilan saat buka halaman
-local active_mode = m.uci:get("qtun", "main", "mode") or "zivpn"
+-- Ambil mode aktif dari UCI config
+local active_mode = m.uci:get("qtun", "main", "mode") or "q-ssh"
 mode.default = active_mode
 
--- PENTING: Agar dropdown ini tidak tersimpan ke /etc/config/qtun
--- kita buat agar dia tidak menulis (non-persistent)
+-- Non-persistent dropdown
 function mode.write() return end
 
--- Memuat sub-module
-dofile("/usr/lib/lua/luci/model/cbi/qtun/ssh.lua")(s, mode)
+-- Memuat sub-module aktif (ssh.lua telah dibuang)
+dofile("/usr/lib/lua/luci/model/cbi/qtun/q-ssh.lua")(s, mode)
 dofile("/usr/lib/lua/luci/model/cbi/qtun/mihomo.lua")(s, mode)
 dofile("/usr/lib/lua/luci/model/cbi/qtun/zivpn.lua")(s, mode)
-dofile("/usr/lib/lua/luci/model/cbi/qtun/q-ssh.lua")(s, mode)
 
 return m

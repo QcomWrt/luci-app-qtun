@@ -15,6 +15,7 @@ QLOAD_BIN="$BASE/core/q-load"
 CLASH_BIN="$BASE/core/clash"
 
 # Configs
+QSSH_DIR="$BASE/config/q-ssh"
 QSSH_CFG="$BASE/config/q-ssh/config.json"
 CLASH_DIR="$BASE/config/clash"
 CLASH_CFG="$CLASH_DIR/q-ssh.yaml"
@@ -66,6 +67,23 @@ auto_rotate_pid_log() {
             sleep 10
         done
     ) &
+}
+
+prepare_config() {
+    log "Preparing Q-SSH JSON configuration..."
+
+    # Baca pilihan qssh_inject_mode dari UCI /etc/config/qtun
+    INJECT_MODE="$(uci -q get qtun.main.qssh_inject_mode)"
+    [ -z "$INJECT_MODE" ] && INJECT_MODE="ssl_payload"
+
+    SRC_JSON="$QSSH_DIR/${INJECT_MODE}.json"
+
+    if [ -f "$SRC_JSON" ]; then
+        cp -f "$SRC_JSON" "$QSSH_CFG"
+        log "Active config loaded: ${INJECT_MODE}.json -> config.json"
+    else
+        log "Warning: Target config $SRC_JSON not found! Using existing config.json"
+    fi
 }
 
 stop_existing() {
@@ -227,6 +245,8 @@ main() {
     log "Initializing Q-SSH stack..."
 
     stop_existing
+
+    prepare_config
     
     # Rantai Ketergantungan Ketat (Fail-Fast Mechanism)
     start_qssh || { log "Fatal: Q-SSH-WORKER failed to initialize. Aborting stack."; exit 1; }

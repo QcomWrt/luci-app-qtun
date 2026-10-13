@@ -79,6 +79,7 @@ function action_status()
     local mode = uci:get("qtun", "main", "mode") or "zivpn"
     local enabled = uci:get("qtun", "main", "enabled") or "0"
     local backend = uci:get("qtun", "main", "backend") or "clash"
+    local qssh_inject_mode = uci:get("qtun", "main", "qssh_inject_mode") or "ssl_payload"
 
     local clash_profile = uci:get("qtun", "clash", "profile") or ""
     local clash_profiles = list_clash_profiles()
@@ -90,8 +91,7 @@ function action_status()
     local running = false
 
     -- =========================================================
-    -- PERBAIKAN: DETEKSI STATUS MENYALA AKURAT UNTUK MODE Q-SSH
-    -- Harus memastikan proses pekerja & aggregator q-load aktif
+    -- DETEKSI STATUS MENYALA UNTUK MODE Q-SSH
     -- =========================================================
     if mode == "q-ssh" then
         running = (sys.call("pgrep Q-SSH-WORKER >/dev/null") == 0) and (sys.call("pgrep q-load >/dev/null") == 0)
@@ -110,7 +110,7 @@ function action_status()
     local log = ""
 
     -- =========================================================
-    -- PERBAIKAN: LOAD LOG LIVE UNTUK PREVIEW DASHBOARD UTAMA
+    -- LOAD LOG LIVE UNTUK PREVIEW DASHBOARD UTAMA
     -- =========================================================
     if mode == "q-ssh" then
         log = sys.exec("tail -n 30 /etc/qtun/run/q-ssh.log 2>/dev/null")
@@ -122,7 +122,7 @@ function action_status()
         log = readfile("/etc/qtun/run/clash.log", "")
     elseif mode == "ssh" or mode == "ssh_ws" or mode == "ssh_ssl" then
         log = readfile("/etc/qtun/run/ssh.log", "")
-    else
+    else 
         log = sys.exec("tail -n 30 /etc/qtun/run/qtun_live.log 2>/dev/null")
     end
 
@@ -131,6 +131,7 @@ function action_status()
         clash_running = clash_running,
         mode = mode,
         backend = backend,
+        qssh_inject_mode = qssh_inject_mode,
         enabled = enabled,
         clash_profile = clash_profile,
         clash_profiles = clash_profiles,
@@ -186,26 +187,29 @@ function action_set_config()
     local enabled = http.formvalue("enabled")
     local backend = http.formvalue("backend")
     local clash_profile = http.formvalue("clash_profile")
+    local qssh_inject_mode = http.formvalue("qssh_inject_mode")
 
     if mode then
         uci:set("qtun", "main", "mode", mode)
         
-        -- Singkirkan opsi backend dari file UCI jika mode adalah clash murni, zivpn, atau q-ssh
         if mode == "clash" or mode == "zivpn" or mode == "q-ssh" then
             uci:delete("qtun", "main", "backend")
         else
-            -- Pasang backend pilihan user jika berada di mode injector (SSH dsb)
             if backend then
                 uci:set("qtun", "main", "backend", backend)
             end
         end
     end
 
+    -- Murni simpan pilihan inject mode ke UCI /etc/config/qtun
+    if qssh_inject_mode and qssh_inject_mode ~= "" then
+        uci:set("qtun", "main", "qssh_inject_mode", qssh_inject_mode)
+    end
+
     if enabled then
         uci:set("qtun", "main", "enabled", enabled)
     end
 
-    -- Update langsung jika dropdown backend berubah saat tab SSH aktif
     if backend and mode ~= "clash" and mode ~= "zivpn" and mode ~= "q-ssh" then
         uci:set("qtun", "main", "backend", backend)
     end

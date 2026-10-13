@@ -31,10 +31,20 @@
                 <option value="zivpn">ZiVPN</option>
                 <option value="q-ssh">Q SSH</option>
                 <option value="clash">Clash</option>
-                <option value="ssh">SSH Direct</option>
-                <!-- <option value="ssh_ws">SSH WebSocket</option>
-                <option value="ssh_ssl">SSH SSL</option> -->
             </select>
+
+            <!-- KHUSUS Q-SSH INJECT MODE -->
+            <div id="qssh-inject-field" style="margin-top:10px; display:none;">
+                <label>Q-SSH Inject Mode:</label>
+                <select id="qssh-inject-mode" onchange="saveSettings()" style="width:100%; margin-top:5px;">
+                    <option value="direct">Direct</option>
+                    <option value="direct_payload">Payload</option>
+                    <option value="ssh_proxy">Proxy</option>
+                    <option value="ssh_proxy_payload">Proxy + Payload</option>
+                    <option value="ssl_sni">SSL / SNI</option>
+                    <option value="ssl_payload">SSL + Payload (WebSocket)</option>
+                </select>
+            </div>
 
             <div id="backend-option-field" style="margin-top:10px; display:none;">
                 <label>Backend Engine:</label>
@@ -193,23 +203,19 @@ const IP = {
     }
 };
 
-/* SAKELAR VISIBILITAS DROPDOWN BACKEND */
-// function toggleBackendOption() {
-//     let mode = document.getElementById("mode").value;
-//     let backendField = document.getElementById("backend-option-field");
-    
-//     // MUNCUL di semua mode, KECUALI zivpn dan clash murni
-//     if (mode !== "zivpn" && mode !== "clash" && mode !== "q-ssh") {
-//         backendField.style.display = "block";
-//     } else {
-//         backendField.style.display = "none";
-//     }
-// }
-
+/* TOGGLE VISIBILITAS FORM CONTROL */
 function toggleBackendOption() {
     let mode = document.getElementById("mode").value;
     let backendField = document.getElementById("backend-option-field");
+    let qsshInjectField = document.getElementById("qssh-inject-field");
     
+    // TAMPILKAN field Inject Mode HANYA jika mode utama adalah q-ssh
+    if (mode === "q-ssh") {
+        qsshInjectField.style.display = "block";
+    } else {
+        qsshInjectField.style.display = "none";
+    }
+
     // SEMBUNYIKAN dropdown backend jika mode adalah zivpn, clash, atau q-ssh
     if (mode === "zivpn" || mode === "clash" || mode === "q-ssh") {
         backendField.style.display = "none";
@@ -218,7 +224,7 @@ function toggleBackendOption() {
     }
 }
 
-/* SAVE MODE + ENABLED + BACKEND */
+/* SAVE MODE + ENABLED + BACKEND + QSSH INJECT MODE */
 function saveSettings() {
     let modeSelect = document.getElementById("mode");
 
@@ -230,11 +236,13 @@ function saveSettings() {
     let mode = modeSelect.value;
     let enabled = document.getElementById("autostart").checked ? "1" : "0";
     let backend = document.getElementById("backend").value;
+    let qsshInjectMode = document.getElementById("qssh-inject-mode").value;
 
     XHR.post('<%=luci.dispatcher.build_url("admin/services/qtun/set_config")%>', {
         mode: mode,
         enabled: enabled,
-        backend: backend
+        backend: backend,
+        qssh_inject_mode: qsshInjectMode
     }, function(x) {});
 }
 
@@ -318,7 +326,12 @@ function fetchData() {
             document.getElementById("mode-active").innerHTML = data.mode || "-";
             if (data.mode) {
                 document.getElementById("mode").value = data.mode;
-                toggleBackendOption(); // Sinkronkan status display dropdown backend
+                toggleBackendOption(); // Sinkronkan status display dropdown
+            }
+
+            /* SYNC Q-SSH INJECT MODE */
+            if (data.qssh_inject_mode) {
+                document.getElementById("qssh-inject-mode").value = data.qssh_inject_mode;
             }
 
             let enabled = (data.enabled == "1");
@@ -375,17 +388,26 @@ function fetchData() {
             clashCard.style.display = data.clash_running ? "block" : "none";
 
             let modeSelect = document.getElementById("mode");
+            let qsshInjectSelect = document.getElementById("qssh-inject-mode");
 
             if (data.running || coreActionState === "starting" || coreActionState === "stopping") {
-                /* LOCK MODE */
+                /* LOCK MODE & QSSH INJECT SELECTOR */
                 modeSelect.disabled = true;
                 modeSelect.style.opacity = "0.7";
                 modeSelect.style.cursor = "not-allowed";
+
+                qsshInjectSelect.disabled = true;
+                qsshInjectSelect.style.opacity = "0.7";
+                qsshInjectSelect.style.cursor = "not-allowed";
             } else {
-                /* UNLOCK MODE */
+                /* UNLOCK MODE & QSSH INJECT SELECTOR */
                 modeSelect.disabled = false;
                 modeSelect.style.opacity = "1";
                 modeSelect.style.cursor = "pointer";
+
+                qsshInjectSelect.disabled = false;
+                qsshInjectSelect.style.opacity = "1";
+                qsshInjectSelect.style.cursor = "pointer";
             }
 
             /* =========================

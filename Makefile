@@ -47,7 +47,7 @@ endif
 MIHOMO_VER:=v1.19.9
 QLOAD_VER:=v1.0.0
 ZIVPN_VER:=udp-zivpn_1.4.9
-QSSH_VER:=v0.1.0
+QSSH_VER:=v0.1.2
 
 YACD_VER:=gh-pages
 METACUBEXD_VER:=gh-pages
